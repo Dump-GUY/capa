@@ -1,4 +1,10 @@
 # Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at: [package root]/LICENSE.txt
+# Unless required by applicable law or agreed to in writing, software distributed under the License
+#  is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and limitations under the License.
 
 import collections
 
@@ -21,11 +27,41 @@ def width(s, character_count):
 def render_meta(doc, ostream):
     rows = [
         (width("md5", 22), width(doc["meta"]["sample"]["md5"], 82)),
+        ("sha1", doc["meta"]["sample"]["sha1"]),
+        ("sha256", doc["meta"]["sample"]["sha256"]),
         ("path", doc["meta"]["sample"]["path"]),
     ]
 
     ostream.write(tabulate.tabulate(rows, tablefmt="psql"))
     ostream.write("\n")
+
+
+def find_subrule_matches(doc):
+    """
+    collect the rule names that have been matched as a subrule match.
+    this way we can avoid displaying entries for things that are too specific.
+    """
+    matches = set([])
+
+    def rec(node):
+        if not node["success"]:
+            # there's probably a bug here for rules that do `not: match: ...`
+            # but we don't have any examples of this yet
+            return
+
+        elif node["node"]["type"] == "statement":
+            for child in node["children"]:
+                rec(child)
+
+        elif node["node"]["type"] == "feature":
+            if node["node"]["feature"]["type"] == "match":
+                matches.add(node["node"]["feature"]["match"])
+
+    for rule in rutils.capability_rules(doc):
+        for node in rule["matches"].values():
+            rec(node)
+
+    return matches
 
 
 def render_capabilities(doc, ostream):
@@ -40,8 +76,16 @@ def render_capabilities(doc, ostream):
         | ...                                                   | ...                                             |
         +-------------------------------------------------------+-------------------------------------------------+
     """
+    subrule_matches = find_subrule_matches(doc)
+
     rows = []
     for rule in rutils.capability_rules(doc):
+        if rule["meta"]["name"] in subrule_matches:
+            # rules that are also matched by other rules should not get rendered by default.
+            # this cuts down on the amount of output while giving approx the same detail.
+            # see #224
+            continue
+
         count = len(rule["matches"])
         if count == 1:
             capability = rutils.bold(rule["meta"]["name"])
@@ -101,7 +145,12 @@ def render_attack(doc, ostream):
                 inner_rows.append("%s::%s %s" % (rutils.bold(technique), subtechnique, id))
             else:
                 raise RuntimeError("unexpected ATT&CK spec format")
-        rows.append((rutils.bold(tactic.upper()), "\n".join(inner_rows),))
+        rows.append(
+            (
+                rutils.bold(tactic.upper()),
+                "\n".join(inner_rows),
+            )
+        )
 
     if rows:
         ostream.write(
@@ -112,12 +161,73 @@ def render_attack(doc, ostream):
         ostream.write("\n")
 
 
+def render_mbc(doc, ostream):
+    """
+    example::
+
+        +--------------------------+------------------------------------------------------------+
+        | MBC Objective            | MBC Behavior                                               |
+        |--------------------------+------------------------------------------------------------|
+        | ANTI-BEHAVIORAL ANALYSIS | Virtual Machine Detection::Instruction Testing [B0009.029] |
+        | COLLECTION               | Keylogging::Polling [F0002.002]                            |
+        | COMMUNICATION            | Interprocess Communication::Create Pipe [C0003.001]        |
+        |                          | Interprocess Communication::Write Pipe [C0003.004]         |
+        | IMPACT                   | Remote Access::Reverse Shell [B0022.001]                   |
+        +--------------------------+------------------------------------------------------------+
+    """
+    objectives = collections.defaultdict(set)
+    for rule in rutils.capability_rules(doc):
+        if not rule["meta"].get("mbc"):
+            continue
+
+        mbcs = rule["meta"]["mbc"]
+        if not isinstance(mbcs, list):
+            raise ValueError("invalid rule: MBC mapping is not a list")
+
+        for mbc in mbcs:
+            objective, _, rest = mbc.partition("::")
+            if "::" in rest:
+                behavior, _, rest = rest.partition("::")
+                method, _, id = rest.rpartition(" ")
+                objectives[objective].add((behavior, method, id))
+            else:
+                behavior, _, id = rest.rpartition(" ")
+                objectives[objective].add((behavior, id))
+
+    rows = []
+    for objective, behaviors in sorted(objectives.items()):
+        inner_rows = []
+        for spec in sorted(behaviors):
+            if len(spec) == 2:
+                behavior, id = spec
+                inner_rows.append("%s %s" % (rutils.bold(behavior), id))
+            elif len(spec) == 3:
+                behavior, method, id = spec
+                inner_rows.append("%s::%s %s" % (rutils.bold(behavior), method, id))
+            else:
+                raise RuntimeError("unexpected MBC spec format")
+        rows.append(
+            (
+                rutils.bold(objective.upper()),
+                "\n".join(inner_rows),
+            )
+        )
+
+    if rows:
+        ostream.write(
+            tabulate.tabulate(rows, headers=[width("MBC Objective", 25), width("MBC Behavior", 75)], tablefmt="psql")
+        )
+        ostream.write("\n")
+
+
 def render_default(doc):
     ostream = rutils.StringIO()
 
     render_meta(doc, ostream)
     ostream.write("\n")
     render_attack(doc, ostream)
+    ostream.write("\n")
+    render_mbc(doc, ostream)
     ostream.write("\n")
     render_capabilities(doc, ostream)
 

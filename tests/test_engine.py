@@ -1,4 +1,10 @@
 # Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at: [package root]/LICENSE.txt
+# Unless required by applicable law or agreed to in writing, software distributed under the License
+#  is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and limitations under the License.
 
 import textwrap
 
@@ -16,21 +22,21 @@ def test_number():
 
 
 def test_and():
-    assert And(Number(1)).evaluate({Number(0): {1}}) == False
-    assert And(Number(1)).evaluate({Number(1): {1}}) == True
-    assert And(Number(1), Number(2)).evaluate({Number(0): {1}}) == False
-    assert And(Number(1), Number(2)).evaluate({Number(1): {1}}) == False
-    assert And(Number(1), Number(2)).evaluate({Number(2): {1}}) == False
-    assert And(Number(1), Number(2)).evaluate({Number(1): {1}, Number(2): {2}}) == True
+    assert And([Number(1)]).evaluate({Number(0): {1}}) == False
+    assert And([Number(1)]).evaluate({Number(1): {1}}) == True
+    assert And([Number(1), Number(2)]).evaluate({Number(0): {1}}) == False
+    assert And([Number(1), Number(2)]).evaluate({Number(1): {1}}) == False
+    assert And([Number(1), Number(2)]).evaluate({Number(2): {1}}) == False
+    assert And([Number(1), Number(2)]).evaluate({Number(1): {1}, Number(2): {2}}) == True
 
 
 def test_or():
-    assert Or(Number(1)).evaluate({Number(0): {1}}) == False
-    assert Or(Number(1)).evaluate({Number(1): {1}}) == True
-    assert Or(Number(1), Number(2)).evaluate({Number(0): {1}}) == False
-    assert Or(Number(1), Number(2)).evaluate({Number(1): {1}}) == True
-    assert Or(Number(1), Number(2)).evaluate({Number(2): {1}}) == True
-    assert Or(Number(1), Number(2)).evaluate({Number(1): {1}, Number(2): {2}}) == True
+    assert Or([Number(1)]).evaluate({Number(0): {1}}) == False
+    assert Or([Number(1)]).evaluate({Number(1): {1}}) == True
+    assert Or([Number(1), Number(2)]).evaluate({Number(0): {1}}) == False
+    assert Or([Number(1), Number(2)]).evaluate({Number(1): {1}}) == True
+    assert Or([Number(1), Number(2)]).evaluate({Number(2): {1}}) == True
+    assert Or([Number(1), Number(2)]).evaluate({Number(1): {1}, Number(2): {2}}) == True
 
 
 def test_not():
@@ -39,32 +45,38 @@ def test_not():
 
 
 def test_some():
-    assert Some(0, Number(1)).evaluate({Number(0): {1}}) == True
-    assert Some(1, Number(1)).evaluate({Number(0): {1}}) == False
+    assert Some(0, [Number(1)]).evaluate({Number(0): {1}}) == True
+    assert Some(1, [Number(1)]).evaluate({Number(0): {1}}) == False
 
-    assert Some(2, Number(1), Number(2), Number(3)).evaluate({Number(0): {1}}) == False
-    assert Some(2, Number(1), Number(2), Number(3)).evaluate({Number(0): {1}, Number(1): {1}}) == False
-    assert Some(2, Number(1), Number(2), Number(3)).evaluate({Number(0): {1}, Number(1): {1}, Number(2): {1}}) == True
+    assert Some(2, [Number(1), Number(2), Number(3)]).evaluate({Number(0): {1}}) == False
+    assert Some(2, [Number(1), Number(2), Number(3)]).evaluate({Number(0): {1}, Number(1): {1}}) == False
+    assert Some(2, [Number(1), Number(2), Number(3)]).evaluate({Number(0): {1}, Number(1): {1}, Number(2): {1}}) == True
     assert (
-        Some(2, Number(1), Number(2), Number(3)).evaluate(
+        Some(2, [Number(1), Number(2), Number(3)]).evaluate(
             {Number(0): {1}, Number(1): {1}, Number(2): {1}, Number(3): {1}}
         )
         == True
     )
     assert (
-        Some(2, Number(1), Number(2), Number(3)).evaluate(
-            {Number(0): {1}, Number(1): {1}, Number(2): {1}, Number(3): {1}, Number(4): {1},}
+        Some(2, [Number(1), Number(2), Number(3)]).evaluate(
+            {
+                Number(0): {1},
+                Number(1): {1},
+                Number(2): {1},
+                Number(3): {1},
+                Number(4): {1},
+            }
         )
         == True
     )
 
 
 def test_complex():
-    assert True == Or(And(Number(1), Number(2)), Or(Number(3), Some(2, Number(4), Number(5), Number(6))),).evaluate(
-        {Number(5): {1}, Number(6): {1}, Number(7): {1}, Number(8): {1}}
-    )
+    assert True == Or(
+        [And([Number(1), Number(2)]), Or([Number(3), Some(2, [Number(4), Number(5), Number(6)])])]
+    ).evaluate({Number(5): {1}, Number(6): {1}, Number(7): {1}, Number(8): {1}})
 
-    assert False == Or(And(Number(1), Number(2)), Or(Number(3), Some(2, Number(4), Number(5)))).evaluate(
+    assert False == Or([And([Number(1), Number(2)]), Or([Number(3), Some(2, [Number(4), Number(5)])])]).evaluate(
         {Number(5): {1}, Number(6): {1}, Number(7): {1}, Number(8): {1}}
     )
 
@@ -252,7 +264,9 @@ def test_match_matched_rules():
     ]
 
     features, matches = capa.engine.match(
-        capa.engine.topologically_order_rules(rules), {capa.features.insn.Number(100): {1}}, 0x0,
+        capa.engine.topologically_order_rules(rules),
+        {capa.features.insn.Number(100): {1}},
+        0x0,
     )
     assert capa.features.MatchedRule("test rule1") in features
     assert capa.features.MatchedRule("test rule2") in features
@@ -260,7 +274,9 @@ def test_match_matched_rules():
     # the ordering of the rules must not matter,
     # the engine should match rules in an appropriate order.
     features, matches = capa.engine.match(
-        capa.engine.topologically_order_rules(reversed(rules)), {capa.features.insn.Number(100): {1}}, 0x0,
+        capa.engine.topologically_order_rules(reversed(rules)),
+        {capa.features.insn.Number(100): {1}},
+        0x0,
     )
     assert capa.features.MatchedRule("test rule1") in features
     assert capa.features.MatchedRule("test rule2") in features
@@ -306,22 +322,30 @@ def test_regex():
         ),
     ]
     features, matches = capa.engine.match(
-        capa.engine.topologically_order_rules(rules), {capa.features.insn.Number(100): {1}}, 0x0,
+        capa.engine.topologically_order_rules(rules),
+        {capa.features.insn.Number(100): {1}},
+        0x0,
     )
     assert capa.features.MatchedRule("test rule") not in features
 
     features, matches = capa.engine.match(
-        capa.engine.topologically_order_rules(rules), {capa.features.String("aaaa"): {1}}, 0x0,
+        capa.engine.topologically_order_rules(rules),
+        {capa.features.String("aaaa"): {1}},
+        0x0,
     )
     assert capa.features.MatchedRule("test rule") not in features
 
     features, matches = capa.engine.match(
-        capa.engine.topologically_order_rules(rules), {capa.features.String("aBBBBa"): {1}}, 0x0,
+        capa.engine.topologically_order_rules(rules),
+        {capa.features.String("aBBBBa"): {1}},
+        0x0,
     )
     assert capa.features.MatchedRule("test rule") not in features
 
     features, matches = capa.engine.match(
-        capa.engine.topologically_order_rules(rules), {capa.features.String("abbbba"): {1}}, 0x0,
+        capa.engine.topologically_order_rules(rules),
+        {capa.features.String("abbbba"): {1}},
+        0x0,
     )
     assert capa.features.MatchedRule("test rule") in features
     assert capa.features.MatchedRule("rule with implied wildcards") in features
@@ -344,7 +368,9 @@ def test_regex_ignorecase():
         ),
     ]
     features, matches = capa.engine.match(
-        capa.engine.topologically_order_rules(rules), {capa.features.String("aBBBBa"): {1}}, 0x0,
+        capa.engine.topologically_order_rules(rules),
+        {capa.features.String("aBBBBa"): {1}},
+        0x0,
     )
     assert capa.features.MatchedRule("test rule") in features
 
@@ -423,7 +449,9 @@ def test_match_namespace():
     ]
 
     features, matches = capa.engine.match(
-        capa.engine.topologically_order_rules(rules), {capa.features.insn.API("CreateFile"): {1}}, 0x0,
+        capa.engine.topologically_order_rules(rules),
+        {capa.features.insn.API("CreateFile"): {1}},
+        0x0,
     )
     assert "CreateFile API" in matches
     assert "file-create" in matches
@@ -433,8 +461,22 @@ def test_match_namespace():
     assert capa.features.MatchedRule("file/create/CreateFile") in features
 
     features, matches = capa.engine.match(
-        capa.engine.topologically_order_rules(rules), {capa.features.insn.API("WriteFile"): {1}}, 0x0,
+        capa.engine.topologically_order_rules(rules),
+        {capa.features.insn.API("WriteFile"): {1}},
+        0x0,
     )
     assert "WriteFile API" in matches
     assert "file-create" not in matches
     assert "filesystem-any" in matches
+
+
+def test_render_number():
+    assert str(capa.features.insn.Number(1)) == "number(0x1)"
+    assert str(capa.features.insn.Number(1, arch=ARCH_X32)) == "number/x32(0x1)"
+    assert str(capa.features.insn.Number(1, arch=ARCH_X64)) == "number/x64(0x1)"
+
+
+def test_render_offset():
+    assert str(capa.features.insn.Offset(1)) == "offset(0x1)"
+    assert str(capa.features.insn.Offset(1, arch=ARCH_X32)) == "offset/x32(0x1)"
+    assert str(capa.features.insn.Offset(1, arch=ARCH_X64)) == "offset/x64(0x1)"

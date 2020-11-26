@@ -1,4 +1,10 @@
 # Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at: [package root]/LICENSE.txt
+# Unless required by applicable law or agreed to in writing, software distributed under the License
+#  is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and limitations under the License.
 
 import struct
 
@@ -14,13 +20,13 @@ from capa.features.file import Export, Import, Section
 
 
 def check_segment_for_pe(seg):
-    """ check segment for embedded PE
+    """check segment for embedded PE
 
-        adapted for IDA from:
-        https://github.com/vivisect/vivisect/blob/7be4037b1cecc4551b397f840405a1fc606f9b53/PE/carve.py#L19
+    adapted for IDA from:
+    https://github.com/vivisect/vivisect/blob/7be4037b1cecc4551b397f840405a1fc606f9b53/PE/carve.py#L19
 
-        args:
-            seg (IDA segment_t)
+    args:
+        seg (IDA segment_t)
     """
     seg_max = seg.end_ea
     mz_xor = [
@@ -31,11 +37,11 @@ def check_segment_for_pe(seg):
         )
         for i in range(256)
     ]
-    todo = [
-        (capa.features.extractors.ida.helpers.find_byte_sequence(seg.start_ea, seg.end_ea, mzx), mzx, pex, i)
-        for mzx, pex, i in mz_xor
-    ]
-    todo = [(off, mzx, pex, i) for (off, mzx, pex, i) in todo if off != idaapi.BADADDR]
+
+    todo = []
+    for (mzx, pex, i) in mz_xor:
+        for off in capa.features.extractors.ida.helpers.find_byte_sequence(seg.start_ea, seg.end_ea, mzx):
+            todo.append((off, mzx, pex, i))
 
     while len(todo):
         off, mzx, pex, i = todo.pop()
@@ -55,17 +61,16 @@ def check_segment_for_pe(seg):
         if idc.get_bytes(peoff, 2) == pex:
             yield (off, i)
 
-        nextres = capa.features.extractors.ida.helpers.find_byte_sequence(off + 1, seg.end_ea, mzx)
-        if nextres != -1:
+        for nextres in capa.features.extractors.ida.helpers.find_byte_sequence(off + 1, seg.end_ea, mzx):
             todo.append((nextres, mzx, pex, i))
 
 
 def extract_file_embedded_pe():
-    """ extract embedded PE features
+    """extract embedded PE features
 
-        IDA must load resource sections for this to be complete
-            - '-R' from console
-            - Check 'Load resource sections' when opening binary in IDA manually
+    IDA must load resource sections for this to be complete
+        - '-R' from console
+        - Check 'Load resource sections' when opening binary in IDA manually
     """
     for seg in capa.features.extractors.ida.helpers.get_segments(skip_header_segments=True):
         for (ea, _) in check_segment_for_pe(seg):
@@ -79,41 +84,54 @@ def extract_file_export_names():
 
 
 def extract_file_import_names():
-    """ extract function imports
+    """extract function imports
 
-        1. imports by ordinal:
-         - modulename.#ordinal
+    1. imports by ordinal:
+     - modulename.#ordinal
 
-        2. imports by name, results in two features to support importname-only
-           matching:
-         - modulename.importname
-         - importname
+    2. imports by name, results in two features to support importname-only
+       matching:
+     - modulename.importname
+     - importname
     """
     for (ea, info) in capa.features.extractors.ida.helpers.get_file_imports().items():
-        if info[1]:
-            yield Import("%s.%s" % (info[0], info[1])), ea
-            yield Import(info[1]), ea
-        if info[2]:
-            yield Import("%s.#%s" % (info[0], str(info[2]))), ea
+        if info[1] and info[2]:
+            # e.g. in mimikatz: ('cabinet', 'FCIAddFile', 11L)
+            # extract by name here and by ordinal below
+            for name in capa.features.extractors.helpers.generate_symbols(info[0], info[1]):
+                yield Import(name), ea
+            dll = info[0]
+            symbol = "#%d" % (info[2])
+        elif info[1]:
+            dll = info[0]
+            symbol = info[1]
+        elif info[2]:
+            dll = info[0]
+            symbol = "#%d" % (info[2])
+        else:
+            continue
+
+        for name in capa.features.extractors.helpers.generate_symbols(dll, symbol):
+            yield Import(name), ea
 
 
 def extract_file_section_names():
-    """ extract section names
+    """extract section names
 
-        IDA must load resource sections for this to be complete
-            - '-R' from console
-            - Check 'Load resource sections' when opening binary in IDA manually
+    IDA must load resource sections for this to be complete
+        - '-R' from console
+        - Check 'Load resource sections' when opening binary in IDA manually
     """
     for seg in capa.features.extractors.ida.helpers.get_segments(skip_header_segments=True):
         yield Section(idaapi.get_segm_name(seg)), seg.start_ea
 
 
 def extract_file_strings():
-    """ extract ASCII and UTF-16 LE strings
+    """extract ASCII and UTF-16 LE strings
 
-        IDA must load resource sections for this to be complete
-            - '-R' from console
-            - Check 'Load resource sections' when opening binary in IDA manually
+    IDA must load resource sections for this to be complete
+        - '-R' from console
+        - Check 'Load resource sections' when opening binary in IDA manually
     """
     for seg in capa.features.extractors.ida.helpers.get_segments():
         seg_buff = capa.features.extractors.ida.helpers.get_segment_buffer(seg)

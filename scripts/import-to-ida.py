@@ -21,12 +21,19 @@ This script will verify that the report matches the workspace.
 Check the output window for any errors, and/or the summary of changes.
 
 Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+You may obtain a copy of the License at: [package root]/LICENSE.txt
+Unless required by applicable law or agreed to in writing, software distributed under the License
+ is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and limitations under the License.
 """
 import json
 import logging
 
 import idc
 import idautils
+import ida_funcs
 import ida_idaapi
 import ida_kernwin
 
@@ -35,7 +42,7 @@ logger = logging.getLogger("capa")
 
 def append_func_cmt(va, cmt, repeatable=False):
     """
-    add the given comment to the given function, 
+    add the given comment to the given function,
     if it doesn't already exist.
     """
     func = ida_funcs.get_func(va)

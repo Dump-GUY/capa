@@ -1,4 +1,10 @@
 # Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at: [package root]/LICENSE.txt
+# Unless required by applicable law or agreed to in writing, software distributed under the License
+#  is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and limitations under the License.
 
 import sys
 import types
@@ -49,16 +55,27 @@ class IdaFeatureExtractor(FeatureExtractor):
     def get_functions(self):
         import capa.features.extractors.ida.helpers as ida_helpers
 
+        # data structure shared across functions yielded here.
+        # useful for caching analysis relevant across a single workspace.
+        ctx = {}
+
         # ignore library functions and thunk functions as identified by IDA
         for f in ida_helpers.get_functions(skip_thunks=True, skip_libs=True):
+            setattr(f, "ctx", ctx)
             yield add_ea_int_cast(f)
+
+    @staticmethod
+    def get_function(ea):
+        f = idaapi.get_func(ea)
+        setattr(f, "ctx", {})
+        return add_ea_int_cast(f)
 
     def extract_function_features(self, f):
         for (feature, ea) in capa.features.extractors.ida.function.extract_features(f):
             yield feature, ea
 
     def get_basic_blocks(self, f):
-        for bb in idaapi.FlowChart(f, flags=idaapi.FC_PREDS):
+        for bb in capa.features.extractors.ida.helpers.get_function_blocks(f):
             yield add_ea_int_cast(bb)
 
     def extract_basic_block_features(self, f, bb):

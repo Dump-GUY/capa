@@ -1,7 +1,14 @@
 # Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at: [package root]/LICENSE.txt
+# Unless required by applicable law or agreed to in writing, software distributed under the License
+#  is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and limitations under the License.
 
 import PE.carve as pe_carve  # vivisect PE
 
+import capa.features.extractors.helpers
 import capa.features.extractors.strings
 from capa.features import String, Characteristic
 from capa.features.file import Export, Import, Section
@@ -35,11 +42,9 @@ def extract_file_import_names(vw, file_path):
         if is_viv_ord_impname(impname):
             # replace ord prefix with #
             impname = "#%s" % impname[len("ord") :]
-            tinfo = "%s.%s" % (modname, impname)
-            yield Import(tinfo), va
-        else:
-            yield Import(tinfo), va
-            yield Import(impname), va
+
+        for name in capa.features.extractors.helpers.generate_symbols(modname, impname):
+            yield Import(name), va
 
 
 def is_viv_ord_impname(impname):

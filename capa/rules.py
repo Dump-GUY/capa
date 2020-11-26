@@ -1,11 +1,24 @@
 # Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at: [package root]/LICENSE.txt
+# Unless required by applicable law or agreed to in writing, software distributed under the License
+#  is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and limitations under the License.
 
 import uuid
 import codecs
 import logging
 import binascii
+import functools
+
+try:
+    from functools import lru_cache
+except ImportError:
+    from backports.functools_lru_cache import lru_cache
 
 import six
+import yaml
 import ruamel.yaml
 
 import capa.engine
@@ -17,7 +30,6 @@ from capa.engine import *
 from capa.features import MAX_BYTES_FEATURE_SIZE
 
 logger = logging.getLogger(__name__)
-
 
 # these are the standard metadata fields, in the preferred order.
 # when reformatted, any custom keys will come after these.
@@ -62,7 +74,6 @@ SUPPORTED_FEATURES = {
     FUNCTION_SCOPE: {
         # plus basic block scope features, see below
         capa.features.basicblock.BasicBlock,
-        capa.features.Characteristic("switch"),
         capa.features.Characteristic("calls from"),
         capa.features.Characteristic("calls to"),
         capa.features.Characteristic("loop"),
@@ -189,8 +200,20 @@ def parse_feature(key):
         return capa.features.Bytes
     elif key == "number":
         return capa.features.insn.Number
+    elif key.startswith("number/"):
+        arch = key.partition("/")[2]
+        # the other handlers here return constructors for features,
+        # and we want to as well,
+        # however, we need to preconfigure one of the arguments (`arch`).
+        # so, instead we return a partially-applied function that
+        #  provides `arch` to the feature constructor.
+        # it forwards any other arguments provided to the closure along to the constructor.
+        return functools.partial(capa.features.insn.Number, arch=arch)
     elif key == "offset":
         return capa.features.insn.Offset
+    elif key.startswith("offset/"):
+        arch = key.partition("/")[2]
+        return functools.partial(capa.features.insn.Offset, arch=arch)
     elif key == "mnemonic":
         return capa.features.insn.Mnemonic
     elif key == "basic blocks":
@@ -244,7 +267,7 @@ def parse_description(s, value_type, description=None):
                 raise InvalidRule(
                     "unexpected bytes value: byte sequences must be no larger than %s bytes" % MAX_BYTES_FEATURE_SIZE
                 )
-        elif value_type in {"number", "offset"}:
+        elif value_type in ("number", "offset") or value_type.startswith(("number/", "offset/")):
             try:
                 value = parse_int(value)
             except ValueError:
@@ -253,27 +276,63 @@ def parse_description(s, value_type, description=None):
     return value, description
 
 
+def pop_statement_description_entry(d):
+    """
+    extracts the description for statements and removes the description entry from the document
+    a statement can only have one description
+
+    example:
+    the features definition
+      - or:
+        - description: statement description
+        - number: 1
+          description: feature description
+
+    becomes
+      <statement>: [
+        { "description": "statement description" },  <-- extracted here
+        { "number": 1, "description": "feature description" }
+      ]
+    """
+    if not isinstance(d, list):
+        return None
+
+    # identify child of form '{ "description": <description> }'
+    descriptions = list(filter(lambda c: isinstance(c, dict) and len(c) == 1 and "description" in c, d))
+    if len(descriptions) > 1:
+        raise InvalidRule("statements can only have one description")
+
+    if not descriptions:
+        return None
+
+    description = descriptions[0]
+    d.remove(description)
+
+    return description["description"]
+
+
 def build_statements(d, scope):
     if len(d.keys()) > 2:
         raise InvalidRule("too many statements")
 
     key = list(d.keys())[0]
+    description = pop_statement_description_entry(d[key])
     if key == "and":
-        return And(*[build_statements(dd, scope) for dd in d[key]])
+        return And([build_statements(dd, scope) for dd in d[key]], description=description)
     elif key == "or":
-        return Or(*[build_statements(dd, scope) for dd in d[key]])
+        return Or([build_statements(dd, scope) for dd in d[key]], description=description)
     elif key == "not":
         if len(d[key]) != 1:
             raise InvalidRule("not statement must have exactly one child statement")
-        return Not(*[build_statements(dd, scope) for dd in d[key]])
+        return Not(build_statements(d[key][0], scope), description=description)
     elif key.endswith(" or more"):
         count = int(key[: -len("or more")])
-        return Some(count, *[build_statements(dd, scope) for dd in d[key]])
+        return Some(count, [build_statements(dd, scope) for dd in d[key]], description=description)
     elif key == "optional":
         # `optional` is an alias for `0 or more`
         # which is useful for documenting behaviors,
         # like with `write file`, we might say that `WriteFile` is optionally found alongside `CreateFileA`.
-        return Some(0, *[build_statements(dd, scope) for dd in d[key]])
+        return Some(0, [build_statements(dd, scope) for dd in d[key]], description=description)
 
     elif key == "function":
         if scope != FILE_SCOPE:
@@ -282,7 +341,7 @@ def build_statements(d, scope):
         if len(d[key]) != 1:
             raise InvalidRule("subscope must have exactly one child statement")
 
-        return Subscope(FUNCTION_SCOPE, *[build_statements(dd, FUNCTION_SCOPE) for dd in d[key]])
+        return Subscope(FUNCTION_SCOPE, build_statements(d[key][0], FUNCTION_SCOPE))
 
     elif key == "basic block":
         if scope != FUNCTION_SCOPE:
@@ -291,7 +350,7 @@ def build_statements(d, scope):
         if len(d[key]) != 1:
             raise InvalidRule("subscope must have exactly one child statement")
 
-        return Subscope(BASIC_BLOCK_SCOPE, *[build_statements(dd, BASIC_BLOCK_SCOPE) for dd in d[key]])
+        return Subscope(BASIC_BLOCK_SCOPE, build_statements(d[key][0], BASIC_BLOCK_SCOPE))
 
     elif key.startswith("count(") and key.endswith(")"):
         # e.g.:
@@ -319,7 +378,7 @@ def build_statements(d, scope):
             #     count(number(0x100 = description))
             if term != "string":
                 value, description = parse_description(arg, term)
-                feature = Feature(value, description)
+                feature = Feature(value, description=description)
             else:
                 # arg is string (which doesn't support inline descriptions), like:
                 #
@@ -332,18 +391,18 @@ def build_statements(d, scope):
 
         count = d[key]
         if isinstance(count, int):
-            return Range(feature, min=count, max=count)
+            return Range(feature, min=count, max=count, description=description)
         elif count.endswith(" or more"):
             min = parse_int(count[: -len(" or more")])
             max = None
-            return Range(feature, min=min, max=max)
+            return Range(feature, min=min, max=max, description=description)
         elif count.endswith(" or fewer"):
             min = None
             max = parse_int(count[: -len(" or fewer")])
-            return Range(feature, min=min, max=max)
+            return Range(feature, min=min, max=max, description=description)
         elif count.startswith("("):
             min, max = parse_range(count)
-            return Range(feature, min=min, max=max)
+            return Range(feature, min=min, max=max, description=description)
         else:
             raise InvalidRule("unexpected range: %s" % (count))
     elif key == "string" and not isinstance(d[key], six.string_types):
@@ -352,7 +411,7 @@ def build_statements(d, scope):
         Feature = parse_feature(key)
         value, description = parse_description(d[key], key, d.get("description"))
         try:
-            feature = Feature(value, description)
+            feature = Feature(value, description=description)
         except ValueError as e:
             raise InvalidRule(str(e))
         ensure_feature_valid_for_scope(scope, feature)
@@ -365,26 +424,6 @@ def first(s):
 
 def second(s):
     return s[1]
-
-
-# we use the ruamel.yaml parser because it supports roundtripping of documents with comments.
-yaml = ruamel.yaml.YAML(typ="rt")
-
-
-# use block mode, not inline json-like mode
-yaml.default_flow_style = False
-
-
-# indent lists by two spaces below their parent
-#
-#     features:
-#       - or:
-#         - mnemonic: aesdec
-#         - mnemonic: vaesdec
-yaml.indent(sequence=2, offset=2)
-
-# avoid word wrapping
-yaml.width = 4096
 
 
 class Rule(object):
@@ -515,7 +554,7 @@ class Rule(object):
         return self.statement.evaluate(features)
 
     @classmethod
-    def from_dict(cls, d, s):
+    def from_dict(cls, d, definition):
         name = d["rule"]["meta"]["name"]
         # if scope is not specified, default to function scope.
         # this is probably the mode that rule authors will start with.
@@ -533,11 +572,52 @@ class Rule(object):
         if scope not in SUPPORTED_FEATURES.keys():
             raise InvalidRule("{:s} is not a supported scope".format(scope))
 
-        return cls(name, scope, build_statements(statements[0], scope), d["rule"]["meta"], s)
+        return cls(name, scope, build_statements(statements[0], scope), d["rule"]["meta"], definition)
+
+    @staticmethod
+    @lru_cache()
+    def _get_yaml_loader():
+        try:
+            # prefer to use CLoader to be fast, see #306
+            # on Linux, make sure you install libyaml-dev or similar
+            # on Windows, get WHLs from pyyaml.org/pypi
+            loader = yaml.CLoader
+            logger.debug("using libyaml CLoader.")
+        except:
+            loader = yaml.Loader
+            logger.debug("unable to import libyaml CLoader, falling back to Python yaml parser.")
+            logger.debug("this will be slower to load rules.")
+
+        return loader
+
+    @staticmethod
+    def _get_ruamel_yaml_parser():
+        # use ruamel to enable nice formatting
+
+        # we use the ruamel.yaml parser because it supports roundtripping of documents with comments.
+        y = ruamel.yaml.YAML(typ="rt")
+
+        # use block mode, not inline json-like mode
+        y.default_flow_style = False
+
+        # indent lists by two spaces below their parent
+        #
+        #     features:
+        #       - or:
+        #         - mnemonic: aesdec
+        #         - mnemonic: vaesdec
+        y.indent(sequence=2, offset=2)
+
+        # avoid word wrapping
+        y.width = 4096
+
+        return y
 
     @classmethod
     def from_yaml(cls, s):
-        return cls.from_dict(yaml.load(s), s)
+        # use pyyaml because it can be much faster than ruamel (pure python)
+        doc = yaml.load(s, Loader=cls._get_yaml_loader())
+        return cls.from_dict(doc, s)
 
     @classmethod
     def from_yaml_file(cls, path):
@@ -557,12 +637,25 @@ class Rule(object):
         # but not for rule logic.
         # programmatic generation of rules is not yet supported.
 
-        definition = yaml.load(self.definition)
-        # definition retains a reference to `meta`,
-        # so we're updating that in place.
-        definition["rule"]["meta"] = self.meta
-        meta = self.meta
+        # use ruamel because it supports round tripping.
+        # pyyaml will lose the existing ordering of rule statements.
+        definition = self._get_ruamel_yaml_parser().load(self.definition)
 
+        # we want to apply any updates that have been made to `meta`.
+        # so we would like to assigned it like this:
+        #
+        #     definition["rule"]["meta"] = self.meta
+        #
+        # however, `self.meta` is not ordered, its just a dict, so subsequent formatting doesn't work.
+        # so, we'll manually copy the keys over, re-using the existing ordereddict/CommentedMap
+        meta = definition["rule"]["meta"]
+        for k in meta.keys():
+            if k not in self.meta:
+                del meta[k]
+        for k, v in self.meta.items():
+            meta[k] = v
+
+        # the name and scope of the rule instance overrides anything in meta.
         meta["name"] = self.name
         meta["scope"] = self.scope
 
@@ -599,14 +692,32 @@ class Rule(object):
             del meta[key]
 
         ostream = six.BytesIO()
-        yaml.dump(definition, ostream)
+        self._get_ruamel_yaml_parser().dump(definition, ostream)
 
         for key, value in hidden_meta.items():
             if value is None:
                 continue
             meta[key] = value
 
-        return ostream.getvalue().decode("utf-8").rstrip("\n") + "\n"
+        doc = ostream.getvalue().decode("utf-8").rstrip("\n") + "\n"
+        # when we have something like:
+        #
+        #     and:
+        #       - string: foo
+        #         description: bar
+        #
+        # we want the `description` horizontally aligned with the start of the `string` (like above).
+        # however, ruamel will give us (which I don't think is even valid yaml):
+        #
+        #     and:
+        #       - string: foo
+        #      description: bar
+        #
+        # tweaking `ruamel.indent()` doesn't quite give us the control we want.
+        # so, add the two extra spaces that we've determined we need through experimentation.
+        # see #263
+        doc = doc.replace("  description:", "    description:")
+        return doc
 
 
 def get_rules_with_scope(rules, scope):

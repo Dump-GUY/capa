@@ -41,6 +41,12 @@ Example::
     ...
 
 Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+You may obtain a copy of the License at: [package root]/LICENSE.txt
+Unless required by applicable law or agreed to in writing, software distributed under the License
+ is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and limitations under the License.
 """
 import os
 import sys
@@ -65,22 +71,22 @@ logger = logging.getLogger("capa.show-capabilities-by-function")
 
 def render_matches_by_function(doc):
     """
-        like:
+    like:
 
-            function at 0x1000321a with 33 features:
-              - get hostname
-              - initialize Winsock library
-            function at 0x10003286 with 63 features:
-              - create thread
-              - terminate thread
-            function at 0x10003415 with 116 features:
-              - write file
-              - send data
-              - link function at runtime
-              - create HTTP request
-              - get common file path
-              - send HTTP request
-              - connect to HTTP server
+        function at 0x1000321a with 33 features:
+          - get hostname
+          - initialize Winsock library
+        function at 0x10003286 with 63 features:
+          - create thread
+          - terminate thread
+        function at 0x10003415 with 116 features:
+          - write file
+          - send data
+          - link function at runtime
+          - create HTTP request
+          - get common file path
+          - send HTTP request
+          - connect to HTTP server
     """
     ostream = rutils.StringIO()
 

@@ -8,54 +8,56 @@ We use PyInstaller to create these packages.
 
 The capa [README](../README.md#download) also links to nightly builds of standalone binaries from the latest development branch.
 
+### Linux Standalone installation
+
+The Linux Standalone binary has been built using GLIB 2.26.
+Consequently it works when using GLIB >= 2.26.
+This requirement is satisfied by default in most newer distribution such as Ubuntu >= 18, Debian >= 10, openSUSE >= 15.1 and CentOS >= 8.
+But the binary may not work in older distributions.
+
+### MacOS Standalone installation
+
+By default, on MacOS Catalina or greater, Gatekeeper will block execution of the standalone binary. To resolve this, simply try to execute it once on the command-line and then go to `System Preferences` / `Security & Privacy` / `General` and approve the application:
+
+![approve dialog](img/approve.png)
+
 ## Method 2: Using capa as a Python library
-To install capa as a Python library, you'll need to install a few dependencies, and then use `pip` to fetch the capa module.
-Note: this technique doesn't pull the default rule set, so you should check it out separately from [capa-rules](https://github.com/fireeye/capa-rules/) and pass the directory to the entrypoint using `-r`.
+To install capa as a Python library use `pip` to fetch the `flare-capa` module.
 
-### 1. Install requirements
-First, install the requirements.
-`$ pip install https://github.com/williballenthin/vivisect/zipball/master`
+#### *Note*:
+This method is appropriate for integrating capa in an existing project.
+This technique doesn't pull the default rule set, so you should check it out separately from [capa-rules](https://github.com/fireeye/capa-rules/) and pass the directory to the entrypoint using `-r` or set the rules path in the IDA Pro plugin.
+Alternatively, see Method 3 below.
 
-### 2. Install capa module
-Second, use `pip` to install the capa module to your local Python environment. This fetches the library code to your computer but does not keep editable source files around for you to hack on. If you'd like to edit the source files, see below.
-`$ pip install https://github.com/fireeye/capa/archive/master.zip`
+### 1. Install capa module
+Use `pip` to install the capa module to your local Python environment. This fetches the library code to your computer but does not keep editable source files around for you to hack on. If you'd like to edit the source files, see below. `$ pip install flare-capa`
 
-### 3. Use capa
+### 2. Use capa
 You can now import the `capa` module from a Python script or use the IDA Pro plugins from the `capa/ida` directory. For more information please see the [usage](usage.md) documentation.
 
 ## Method 3: Inspecting the capa source code
 If you'd like to review and modify the capa source code, you'll need to check it out from GitHub and install it locally. By following these instructions, you'll maintain a local directory of source code that you can modify and run easily. 
 
-### 1. Install requirements
-First, install the requirements.
-`$ pip install https://github.com/williballenthin/vivisect/zipball/master`
+### 1. Check out source code
+Next, clone the capa git repository.
+We use submodules to separate [code](https://github.com/fireeye/capa), [rules](https://github.com/fireeye/capa-rules), and [test data](https://github.com/fireeye/capa-testfiles).
+To clone everything use the `--recurse-submodules` option:
+- `$ git clone --recurse-submodules https://github.com/fireeye/capa.git /local/path/to/src` (HTTPS)
+- `$ git clone --recurse-submodules git@github.com:fireeye/capa.git /local/path/to/src` (SSH)
 
-### 2. Check out source code
-Next, clone the capa git repository. We use submodules to separate code, rules, and test data. See below to get all data at once. To only get the source code and our provided rules (common), follow these steps:
+To only get the source code and our provided rules (common), follow these steps:
 - clone repository
   - `$ git clone https://github.com/fireeye/capa.git /local/path/to/src` (HTTPS)
   - `$ git clone git@github.com:fireeye/capa.git /local/path/to/src` (SSH)
 - `$ cd /local/path/to/src`
-- `$ git submodule init`
-- `$ git submodule update rules`
+- `$ git submodule update --init rules`
 
-#### capa-testfiles
-The [capa-testfiles](https://github.com/fireeye/capa-testfiles) repository (`/local/path/to/src/tests/data`) contains a large collection of malware and benign test files. *In most cases you will not need to check it out on your local system.*
-
-To update the testfiles you can use the following command:
-- `$ git submodule update tests/data`
-
-To get all data at once use the `--recurse-submodules` option:
-
-- `$ git clone --recurse-submodules https://github.com/fireeye/capa.git /local/path/to/src` (HTTPS)
-- `$ git clone --recurse-submodules git@github.com:fireeye/capa.git /local/path/to/src` (SSH)
-
-### 3. Install the local source code
-Finally, use `pip` to install the source code in "editable" mode. This means that Python will load the capa module from the local directory rather than copying it to `site-packages` or `dist-packages`. This is good because it is easy to modify files and see the effects reflected immediately. But, be careful not to remove this directory unless uninstalling capa.
+### 2. Install the local source code
+Use `pip` to install the source code in "editable" mode. This means that Python will load the capa module from the local directory rather than copying it to `site-packages` or `dist-packages`. This is good because it is easy to modify files and see the effects reflected immediately. But, be careful not to remove this directory unless uninstalling capa.
 
 `$ pip install -e /local/path/to/src`
 
-You'll find that the `capa.exe` (Windows) or `capa` (Linux) executables in your path now invoke the capa binary from this directory.
+You'll find that the `capa.exe` (Windows) or `capa` (Linux/MacOS) executables in your path now invoke the capa binary from this directory.
 
 We use the following tools to ensure consistent code style and formatting:
   - [black](https://github.com/psf/black) code formatter, with `-l 120`
@@ -69,10 +71,28 @@ To install these development dependencies, run:
 
 Note that some development dependencies (including the black code formatter) require Python 3.
 
-### 4. Setup hooks [optional]
+To check the code style, formatting and run the tests you can run the script `scripts/ci.sh`.
+You can run it with the argument `no_tests` to skip the tests and only run the code style and formatting: `scripts/ci.sh no_tests`
 
+### 3. Compile binary using PyInstaller
+We compile capa standalone binaries using PyInstaller. To reproduce the build process check out the source code as described above and follow these steps.
+
+#### Install PyInstaller:
+For Python 2.7: `$ pip install 'pyinstaller==3.*'` (PyInstaller 4 doesn't support Python 2.7)
+
+For Python 3: `$ pip install 'pyinstaller`
+
+#### Run Pyinstaller
+`$ pyinstaller .github/pyinstaller/pyinstaller.spec`
+
+You can find the compiled binary in the created directory `dist/`.
+
+### 4. Setup hooks [optional]
 If you plan to contribute to capa, you may want to setup the hooks.
 Run `scripts/setup-hooks.sh` to set the following hooks up:
-- The `post-commit` hook runs checks after every `git commit`, letting you know if there are code style or rule linter offenses you need to fix.
-- The `pre-push` hook runs various style and lint checks as well as the tests. If they do not succeed `git push` is blocked.
+- The `pre-commit` hook runs checks before every `git commit`.
+  It runs `scripts/ci.sh no_tests` aborting the commit if there are code style or rule linter offenses you need to fix.
+  You can skip this check by using the `--no-verify` git option.
+- The `pre-push` hook runs checks before every `git push`.
+  It runs `scripts/ci.sh` aborting the push if there are code style or rule linter offenses or if the tests fail.
   This way you can ensure everything is alright before sending a pull request.

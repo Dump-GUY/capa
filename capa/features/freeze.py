@@ -41,6 +41,12 @@ json format:
     }
 
 Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+You may obtain a copy of the License at: [package root]/LICENSE.txt
+Unless required by applicable law or agreed to in writing, software distributed under the License
+ is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and limitations under the License.
 """
 import json
 import zlib
@@ -78,7 +84,16 @@ def dumps(extractor):
     returns:
       str: the serialized features.
     """
-    ret = {"version": 1, "functions": {}, "scopes": {"file": [], "function": [], "basic block": [], "instruction": [],}}
+    ret = {
+        "version": 1,
+        "functions": {},
+        "scopes": {
+            "file": [],
+            "function": [],
+            "basic block": [],
+            "instruction": [],
+        },
+    }
 
     for feature, va in extractor.extract_file_features():
         ret["scopes"]["file"].append(serialize_feature(feature) + (hex(va), ()))
@@ -93,14 +108,33 @@ def dumps(extractor):
             ret["functions"][hex(f)][hex(bb)] = []
 
             for feature, va in extractor.extract_basic_block_features(f, bb):
-                ret["scopes"]["basic block"].append(serialize_feature(feature) + (hex(va), (hex(f), hex(bb),)))
+                ret["scopes"]["basic block"].append(
+                    serialize_feature(feature)
+                    + (
+                        hex(va),
+                        (
+                            hex(f),
+                            hex(bb),
+                        ),
+                    )
+                )
 
-            for insn, insnva in sorted([(insn, int(insn)) for insn in extractor.get_instructions(f, bb)]):
+            for insnva, insn in sorted(
+                [(insn.__int__(), insn) for insn in extractor.get_instructions(f, bb)], key=lambda p: p[0]
+            ):
                 ret["functions"][hex(f)][hex(bb)].append(hex(insnva))
 
                 for feature, va in extractor.extract_insn_features(f, bb, insn):
                     ret["scopes"]["instruction"].append(
-                        serialize_feature(feature) + (hex(va), (hex(f), hex(bb), hex(insnva),))
+                        serialize_feature(feature)
+                        + (
+                            hex(va),
+                            (
+                                hex(f),
+                                hex(bb),
+                                hex(insnva),
+                            ),
+                        )
                     )
     return json.dumps(ret)
 
@@ -239,12 +273,7 @@ def main(argv=None):
         logging.basicConfig(level=logging.INFO)
         logging.getLogger().setLevel(logging.INFO)
 
-    vw = capa.main.get_workspace(args.sample, args.format)
-
-    # don't import this at top level to support ida/py3 backend
-    import capa.features.extractors.viv
-
-    extractor = capa.features.extractors.viv.VivisectFeatureExtractor(vw, args.sample)
+    extractor = capa.main.get_extractor(args.sample, args.format)
     with open(args.output, "wb") as f:
         f.write(dump(extractor))
 

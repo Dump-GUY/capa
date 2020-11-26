@@ -1,8 +1,12 @@
 #!/usr/bin/env python2
 """
-identify capabilities in programs.
-
 Copyright (C) 2020 FireEye, Inc. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+You may obtain a copy of the License at: [package root]/LICENSE.txt
+Unless required by applicable law or agreed to in writing, software distributed under the License
+ is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and limitations under the License.
 """
 import os
 import sys
@@ -14,6 +18,7 @@ import datetime
 import textwrap
 import collections
 
+import halo
 import tqdm
 import colorama
 
@@ -100,9 +105,14 @@ def find_capabilities(ruleset, extractor, disable_progress=None):
     all_function_matches = collections.defaultdict(list)
     all_bb_matches = collections.defaultdict(list)
 
-    meta = {"feature_counts": {"file": 0, "functions": {},}}
+    meta = {
+        "feature_counts": {
+            "file": 0,
+            "functions": {},
+        }
+    }
 
-    for f in tqdm.tqdm(extractor.get_functions(), disable=disable_progress, unit=" functions"):
+    for f in tqdm.tqdm(list(extractor.get_functions()), disable=disable_progress, desc="matching", unit=" functions"):
         function_matches, bb_matches, feature_count = find_function_capabilities(ruleset, extractor, f)
         meta["feature_counts"]["functions"][f.__int__()] = feature_count
         logger.debug("analyzed function 0x%x and extracted %d features", f.__int__(), feature_count)
@@ -206,7 +216,7 @@ def is_supported_file_type(sample):
 SHELLCODE_BASE = 0x690000
 
 
-def get_shellcode_vw(sample, arch="auto"):
+def get_shellcode_vw(sample, arch="auto", should_save=True):
     """
     Return shellcode workspace using explicit arch or via auto detect
     """
@@ -218,12 +228,17 @@ def get_shellcode_vw(sample, arch="auto"):
         # choose arch with most functions, idea by Jay G.
         vw_cands = []
         for arch in ["i386", "amd64"]:
-            vw_cands.append(viv_utils.getShellcodeWorkspace(sample_bytes, arch, base=SHELLCODE_BASE))
+            vw_cands.append(
+                viv_utils.getShellcodeWorkspace(sample_bytes, arch, base=SHELLCODE_BASE, should_save=should_save)
+            )
         if not vw_cands:
             raise ValueError("could not generate vivisect workspace")
         vw = max(vw_cands, key=lambda vw: len(vw.getFunctions()))
     else:
-        vw = viv_utils.getShellcodeWorkspace(sample_bytes, arch, base=SHELLCODE_BASE)
+        vw = viv_utils.getShellcodeWorkspace(sample_bytes, arch, base=SHELLCODE_BASE, should_save=should_save)
+
+    vw.setMeta("StorageName", "%s.viv" % sample)
+
     return vw
 
 
@@ -242,28 +257,36 @@ class UnsupportedFormatError(ValueError):
     pass
 
 
-def get_workspace(path, format):
+def get_workspace(path, format, should_save=True):
     import viv_utils
 
     logger.debug("generating vivisect workspace for: %s", path)
     if format == "auto":
         if not is_supported_file_type(path):
             raise UnsupportedFormatError()
-        vw = viv_utils.getWorkspace(path)
+        vw = viv_utils.getWorkspace(path, should_save=should_save)
     elif format == "pe":
-        vw = viv_utils.getWorkspace(path)
+        vw = viv_utils.getWorkspace(path, should_save=should_save)
     elif format == "sc32":
-        vw = get_shellcode_vw(path, arch="i386")
+        vw = get_shellcode_vw(path, arch="i386", should_save=should_save)
     elif format == "sc64":
-        vw = get_shellcode_vw(path, arch="amd64")
+        vw = get_shellcode_vw(path, arch="amd64", should_save=should_save)
     logger.debug("%s", get_meta_str(vw))
     return vw
 
 
-def get_extractor_py2(path, format):
+def get_extractor_py2(path, format, disable_progress=False):
     import capa.features.extractors.viv
 
-    vw = get_workspace(path, format)
+    with halo.Halo(text="analyzing program", spinner="simpleDots", stream=sys.stderr, enabled=not disable_progress):
+        vw = get_workspace(path, format, should_save=False)
+
+        try:
+            vw.saveWorkspace()
+        except IOError:
+            # see #168 for discussion around how to handle non-writable directories
+            logger.info("source directory is not writable, won't save intermediate workspace")
+
     return capa.features.extractors.viv.VivisectFeatureExtractor(vw, path)
 
 
@@ -271,19 +294,31 @@ class UnsupportedRuntimeError(RuntimeError):
     pass
 
 
-def get_extractor_py3(path, format):
-    raise UnsupportedRuntimeError()
+def get_extractor_py3(path, format, disable_progress=False):
+    from smda.SmdaConfig import SmdaConfig
+    from smda.Disassembler import Disassembler
+
+    import capa.features.extractors.smda
+
+    smda_report = None
+    with halo.Halo(text="analyzing program", spinner="simpleDots", stream=sys.stderr, enabled=not disable_progress):
+        config = SmdaConfig()
+        config.STORE_BUFFER = True
+        smda_disasm = Disassembler(config)
+        smda_report = smda_disasm.disassembleFile(path)
+
+    return capa.features.extractors.smda.SmdaFeatureExtractor(smda_report, path)
 
 
-def get_extractor(path, format):
+def get_extractor(path, format, disable_progress=False):
     """
     raises:
       UnsupportedFormatError:
     """
     if sys.version_info >= (3, 0):
-        return get_extractor_py3(path, format)
+        return get_extractor_py3(path, format, disable_progress=disable_progress)
     else:
-        return get_extractor_py2(path, format)
+        return get_extractor_py2(path, format, disable_progress=disable_progress)
 
 
 def is_nursery_rule_path(path):
@@ -299,7 +334,7 @@ def is_nursery_rule_path(path):
     return "nursery" in path
 
 
-def get_rules(rule_path):
+def get_rules(rule_path, disable_progress=False):
     if not os.path.exists(rule_path):
         raise IOError("rule path %s does not exist or cannot be accessed" % rule_path)
 
@@ -317,7 +352,7 @@ def get_rules(rule_path):
 
             for file in files:
                 if not file.endswith(".yml"):
-                    if not (file.endswith(".md") or file.endswith(".git")):
+                    if not (file.endswith(".md") or file.endswith(".git") or file.endswith(".txt")):
                         # expect to see readme.md, format.md, and maybe a .git directory
                         # other things maybe are rules, but are mis-named.
                         logger.warning("skipping non-.yml file: %s", file)
@@ -327,7 +362,8 @@ def get_rules(rule_path):
                 rule_paths.append(rule_path)
 
     rules = []
-    for rule_path in rule_paths:
+
+    for rule_path in tqdm.tqdm(list(rule_paths), disable=disable_progress, desc="loading ", unit="     rules"):
         try:
             rule = capa.rules.Rule.from_yaml_file(rule_path)
         except capa.rules.InvalidRule:
@@ -390,6 +426,7 @@ def main(argv=None):
     ]
     format_help = ", ".join(["%s: %s" % (f[0], f[1]) for f in formats])
 
+    desc = "The FLARE team's open-source tool to identify capabilities in executable files."
     epilog = textwrap.dedent(
         """
         By default, capa uses a default set of embedded rules.
@@ -402,13 +439,13 @@ def main(argv=None):
 
         examples:
           identify capabilities in a binary
-            capa suspicous.exe
+            capa suspicious.exe
 
           identify capabilities in 32-bit shellcode, see `-f` for all supported formats
             capa -f sc32 shellcode.bin
 
           report match locations
-            capa -v suspicous.exe
+            capa -v suspicious.exe
 
           report all feature match details
             capa -vv suspicious.exe
@@ -419,9 +456,25 @@ def main(argv=None):
     )
 
     parser = argparse.ArgumentParser(
-        description=__doc__, epilog=epilog, formatter_class=argparse.RawDescriptionHelpFormatter
+        description=desc, epilog=epilog, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("sample", type=str, help="path to sample to analyze")
+
+    if sys.version_info >= (3, 0):
+        parser.add_argument(
+            # Python 3 str handles non-ASCII arguments correctly
+            "sample",
+            type=str,
+            help="path to sample to analyze",
+        )
+    else:
+        parser.add_argument(
+            # in #328 we noticed that the sample path is not handled correctly if it contains non-ASCII characters
+            # https://stackoverflow.com/a/22947334/ offers a solution and decoding using getfilesystemencoding works
+            # in our testing, however other sources suggest `sys.stdin.encoding` (https://stackoverflow.com/q/4012571/)
+            "sample",
+            type=lambda s: s.decode(sys.getfilesystemencoding()),
+            help="path to sample to analyze",
+        )
     parser.add_argument("--version", action="version", version="%(prog)s {:s}".format(capa.version.__version__))
     parser.add_argument(
         "-r",
@@ -468,7 +521,9 @@ def main(argv=None):
     try:
         taste = get_file_taste(args.sample)
     except IOError as e:
-        logger.error("%s", str(e))
+        # per our research there's not a programmatic way to render the IOError with non-ASCII filename unless we
+        # handle the IOError separately and reach into the args
+        logger.error("%s", e.args[0])
         return -1
 
     # py2 doesn't know about cp65001, which is a variant of utf-8 on windows
@@ -509,9 +564,15 @@ def main(argv=None):
         logger.debug("using rules path: %s", rules_path)
 
     try:
-        rules = get_rules(rules_path)
+        rules = get_rules(rules_path, disable_progress=args.quiet)
         rules = capa.rules.RuleSet(rules)
-        logger.debug("successfully loaded %s rules", len(rules))
+        logger.debug(
+            "successfully loaded %s rules",
+            # during the load of the RuleSet, we extract subscope statements into their own rules
+            # that are subsequently `match`ed upon. this inflates the total rule count.
+            # so, filter out the subscope rules when reporting total number of loaded rules.
+            len([i for i in filter(lambda r: "capa/subscope-rule" not in r.meta, rules.rules.values())]),
+        )
         if args.tag:
             rules = rules.filter_rules_by_meta(args.tag)
             logger.debug("selected %s rules", len(rules))
@@ -529,7 +590,7 @@ def main(argv=None):
     else:
         format = args.format
         try:
-            extractor = get_extractor(args.sample, args.format)
+            extractor = get_extractor(args.sample, args.format, disable_progress=args.quiet)
         except UnsupportedFormatError:
             logger.error("-" * 80)
             logger.error(" Input file does not appear to be a PE file.")
@@ -553,7 +614,7 @@ def main(argv=None):
 
     meta = collect_metadata(argv, args.sample, args.rules, format, extractor)
 
-    capabilities, counts = find_capabilities(rules, extractor)
+    capabilities, counts = find_capabilities(rules, extractor, disable_progress=args.quiet)
     meta["analysis"].update(counts)
 
     if has_file_limitation(rules, capabilities):
@@ -597,6 +658,9 @@ def ida_main():
     logging.basicConfig(level=logging.INFO)
     logging.getLogger().setLevel(logging.INFO)
 
+    if not capa.ida.helpers.is_supported_ida_version():
+        return -1
+
     if not capa.ida.helpers.is_supported_file_type():
         return -1
 
@@ -619,7 +683,7 @@ def ida_main():
     rules = get_rules(rules_path)
     rules = capa.rules.RuleSet(rules)
 
-    meta = collect_metadata([], "", rules_path, format, "IdaExtractor")
+    meta = capa.ida.helpers.collect_metadata()
 
     capabilities, counts = find_capabilities(rules, capa.features.extractors.ida.IdaFeatureExtractor())
     meta["analysis"].update(counts)
@@ -627,6 +691,7 @@ def ida_main():
     if has_file_limitation(rules, capabilities, is_standalone=False):
         capa.ida.helpers.inform_user_ida_ui("capa encountered warnings during analysis")
 
+    colorama.init(strip=True)
     print(capa.render.render_default(meta, rules, capabilities))
 
 

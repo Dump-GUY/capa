@@ -1,7 +1,7 @@
 ![capa](.github/logo.png)
 
-[![Code style checkers status](https://github.com/fireeye/capa/workflows/CI/badge.svg)](https://github.com/fireeye/capa/actions?query=workflow%3A%22CI%22)
-[![Number of rules](https://img.shields.io/badge/rules-261-blue.svg)](https://github.com/fireeye/capa-rules)
+[![CI status](https://github.com/fireeye/capa/workflows/CI/badge.svg)](https://github.com/fireeye/capa/actions?query=workflow%3ACI+event%3Apush+branch%3Amaster)
+[![Number of rules](https://img.shields.io/badge/rules-427-blue.svg)](https://github.com/fireeye/capa-rules)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE.txt)
 
 capa detects capabilities in executable files.
@@ -60,7 +60,7 @@ $ capa.exe suspicious.exe
 
 # download and usage
 
-Download stable releases of the standalone capa binaries [here](https://github.com/fireeye/capa/releases). You can run the standalone binaries without installation.
+Download stable releases of the standalone capa binaries [here](https://github.com/fireeye/capa/releases). You can run the standalone binaries without installation. capa is a command line tool that should be run from the terminal.
 
 <!--
 Alternatively, you can fetch a nightly build of a standalone binary from one of the following links. These are built using the latest development branch.
@@ -71,7 +71,7 @@ Alternatively, you can fetch a nightly build of a standalone binary from one of 
 
 To use capa as a library or integrate with another tool, see [doc/installation.md](doc/installation.md) for further setup instructions.
 
-For more information about how to use capa, including running it as an IDA script/plugin see [doc/usage.md](doc/usage.md).
+For more information about how to use capa, see [doc/usage.md](doc/usage.md).
 
 # example
 
@@ -146,12 +146,11 @@ rule:
 The [github.com/fireeye/capa-rules](https://github.com/fireeye/capa-rules) repository contains hundreds of standard library rules that are distributed with capa.
 Please learn to write rules and contribute new entries as you find interesting techniques in malware.
 
-If you use IDA Pro, then you use can use the [IDA Pro plugin for capa](./capa/ida/ida_capa_explorer.py).
-This script adds new user interface elements to IDA, including an interactive tree view of rule matches and their locations within the current database.
-As you select the checkboxes, the plugin will highlight the addresses associated with the features.
-We use this plugin all the time to quickly jump to interesting parts of a program.
+If you use IDA Pro, then you use can use the [capa explorer IDA plugin](capa/ida/plugin/).
+capa explorer lets you quickly identify and navigate to interesting areas of a program and dissect capa rule matches at
+the assembly level.
 
-![capa + IDA Pro integration](.github/capa-ida.jpg)
+![capa + IDA Pro integration](doc/img/ida_plugin_intro.gif)
 
 # further information
 ## capa
